@@ -143,12 +143,14 @@ export const defaultWebdavSyncConfig: WebdavSyncConfig = {
 type ConfigStore = {
     config: AiConfig;
     webdav: WebdavSyncConfig;
+    historyScope: string | null;
     isConfigOpen: boolean;
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     importChannelCredentials: (input: ChannelCredentialsInput) => ChannelCredentialsImportResult;
     updateChannelModels: (channelId: string, models: string[]) => void;
+    setHistoryScope: (historyScope: string) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
@@ -218,6 +220,7 @@ export const useConfigStore = create<ConfigStore>()(
         (set, get) => ({
             config: defaultConfig,
             webdav: defaultWebdavSyncConfig,
+            historyScope: typeof window !== "undefined" && window.parent !== window ? null : "standalone",
             isConfigOpen: false,
             configTab: "channels",
             shouldPromptContinue: false,
@@ -246,6 +249,7 @@ export const useConfigStore = create<ConfigStore>()(
                     });
                     return { config: withModelChannels(state.config, channels) };
                 }),
+            setHistoryScope: (historyScope) => set({ historyScope }),
             updateWebdavConfig: (key, value) =>
                 set((state) => ({
                     webdav: {

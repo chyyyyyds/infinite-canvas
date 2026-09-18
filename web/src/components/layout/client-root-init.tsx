@@ -15,6 +15,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const managedChannelRequest = useRef(0);
     const importChannelCredentials = useConfigStore((state) => state.importChannelCredentials);
     const updateChannelModels = useConfigStore((state) => state.updateChannelModels);
+    const setHistoryScope = useConfigStore((state) => state.setHistoryScope);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     usePromptSourceScheduler();
@@ -50,6 +51,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             if (!config) return;
 
             const requestId = ++managedChannelRequest.current;
+            setHistoryScope(config.historyScope);
             const result = importChannelCredentials({ ...config, managedByHost: true });
             const channel = useConfigStore.getState().config.channels.find((item) => item.id === result.channelId);
             if (!channel) return;
@@ -69,7 +71,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         window.addEventListener("message", handleMessage);
         window.parent.postMessage({ type: NEW_API_CANVAS_READY, version: 1 }, parentOrigin);
         return () => window.removeEventListener("message", handleMessage);
-    }, [importChannelCredentials, message, t, updateChannelModels]);
+    }, [importChannelCredentials, message, setHistoryScope, t, updateChannelModels]);
 
     return <>{children}</>;
 }

@@ -8,17 +8,21 @@ export type NewApiCanvasConfig = {
     baseUrl: string;
     apiKey: string;
     channelName: string;
+    historyScope: string;
 };
 
 export function parseNewApiCanvasConfig(data: unknown, expectedOrigin: string): NewApiCanvasConfig | null {
     if (!data || typeof data !== "object") return null;
     const candidate = data as Record<string, unknown>;
-    if (candidate.type !== NEW_API_CANVAS_CONFIG || candidate.version !== 1 || typeof candidate.baseUrl !== "string" || typeof candidate.apiKey !== "string" || typeof candidate.channelName !== "string") return null;
+    if (candidate.type !== NEW_API_CANVAS_CONFIG || candidate.version !== 1 || typeof candidate.baseUrl !== "string" || typeof candidate.apiKey !== "string" || typeof candidate.channelName !== "string" || typeof candidate.historyScope !== "string")
+        return null;
 
     const apiKey = candidate.apiKey.trim();
     const channelName = candidate.channelName.trim();
+    const historyScope = candidate.historyScope.trim();
     if (!apiKey.startsWith("sk-") || apiKey.length <= 3) return null;
     if (!channelName || channelName.length > 100) return null;
+    if (!/^user-[1-9]\d{0,19}$/.test(historyScope)) return null;
 
     try {
         const baseUrl = new URL(candidate.baseUrl.trim());
@@ -29,6 +33,7 @@ export function parseNewApiCanvasConfig(data: unknown, expectedOrigin: string): 
             baseUrl: baseUrl.origin,
             apiKey,
             channelName,
+            historyScope,
         };
     } catch {
         return null;

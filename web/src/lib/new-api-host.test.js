@@ -12,6 +12,7 @@ describe("parseNewApiCanvasConfig", () => {
                     baseUrl: "https://api.example.com/v1",
                     apiKey: "sk-image-key",
                     channelName: "图图",
+                    historyScope: "user-42",
                 },
                 "https://api.example.com",
             ),
@@ -21,6 +22,7 @@ describe("parseNewApiCanvasConfig", () => {
             baseUrl: "https://api.example.com",
             apiKey: "sk-image-key",
             channelName: "图图",
+            historyScope: "user-42",
         });
     });
 
@@ -33,6 +35,7 @@ describe("parseNewApiCanvasConfig", () => {
                     baseUrl: "https://attacker.example/v1",
                     apiKey: "sk-image-key",
                     channelName: "图图",
+                    historyScope: "user-42",
                 },
                 "https://api.example.com",
             ),
@@ -48,6 +51,7 @@ describe("parseNewApiCanvasConfig", () => {
                     baseUrl: "https://api.example.com",
                     apiKey: "image-key",
                     channelName: "图图",
+                    historyScope: "user-42",
                 },
                 "https://api.example.com",
             ),
@@ -62,6 +66,23 @@ describe("parseNewApiCanvasConfig", () => {
                     version: 1,
                     baseUrl: "https://api.example.com",
                     apiKey: "sk-image-key",
+                    historyScope: "user-42",
+                },
+                "https://api.example.com",
+            ),
+        ).toBeNull();
+    });
+
+    test("rejects an invalid history scope", () => {
+        expect(
+            parseNewApiCanvasConfig(
+                {
+                    type: NEW_API_CANVAS_CONFIG,
+                    version: 1,
+                    baseUrl: "https://api.example.com",
+                    apiKey: "sk-image-key",
+                    channelName: "图图",
+                    historyScope: "../shared",
                 },
                 "https://api.example.com",
             ),
