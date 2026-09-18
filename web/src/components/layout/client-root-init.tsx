@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { App } from "antd";
 import { useTranslation } from "react-i18next";
 
+import { NEW_API_CANVAS_CONFIGURED, NEW_API_CANVAS_READY, parseNewApiCanvasConfig } from "@/lib/new-api-host";
 import { useConfigStore } from "@/stores/use-config-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 
@@ -33,6 +34,28 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         else if (result.status === "updated") message.success(t("config.importedChannelUpdated", { name: result.channelName }));
         else if (result.status === "missing-base-url") message.error(t("config.importedChannelBaseUrlRequired"));
         else message.error(t("config.importedChannelBaseUrlInvalid"));
+    }, [importChannelCredentials, message, openConfigDialog, t]);
+
+    useEffect(() => {
+        if (window.parent === window) return;
+
+        const parentOrigin = window.location.origin;
+        const handleMessage = (event: MessageEvent) => {
+            // 仅接受同源父窗口发送的配置，避免第三方页面注入或窃取 API Key。
+            if (event.origin !== parentOrigin || event.source !== window.parent) return;
+            const config = parseNewApiCanvasConfig(event.data, parentOrigin);
+            if (!config) return;
+
+            const result = importChannelCredentials(config);
+            openConfigDialog(false, "channels");
+            window.parent.postMessage({ type: NEW_API_CANVAS_CONFIGURED, version: 1 }, parentOrigin);
+            if (result.status === "created") message.success(t("config.importedChannelCreated", { name: result.channelName }));
+            else if (result.status === "updated") message.success(t("config.importedChannelUpdated", { name: result.channelName }));
+        };
+
+        window.addEventListener("message", handleMessage);
+        window.parent.postMessage({ type: NEW_API_CANVAS_READY, version: 1 }, parentOrigin);
+        return () => window.removeEventListener("message", handleMessage);
     }, [importChannelCredentials, message, openConfigDialog, t]);
 
     return <>{children}</>;

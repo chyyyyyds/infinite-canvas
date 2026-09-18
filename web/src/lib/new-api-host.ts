@@ -1,0 +1,32 @@
+export const NEW_API_CANVAS_READY = "new-api:canvas-ready";
+export const NEW_API_CANVAS_CONFIG = "new-api:canvas-config";
+export const NEW_API_CANVAS_CONFIGURED = "new-api:canvas-configured";
+
+export type NewApiCanvasConfig = {
+    type: typeof NEW_API_CANVAS_CONFIG;
+    version: 1;
+    baseUrl: string;
+    apiKey: string;
+};
+
+export function parseNewApiCanvasConfig(data: unknown, expectedOrigin: string): NewApiCanvasConfig | null {
+    if (!data || typeof data !== "object") return null;
+    const candidate = data as Record<string, unknown>;
+    if (candidate.type !== NEW_API_CANVAS_CONFIG || candidate.version !== 1 || typeof candidate.baseUrl !== "string" || typeof candidate.apiKey !== "string") return null;
+
+    const apiKey = candidate.apiKey.trim();
+    if (!apiKey.startsWith("sk-") || apiKey.length <= 3) return null;
+
+    try {
+        const baseUrl = new URL(candidate.baseUrl.trim());
+        if (baseUrl.origin !== expectedOrigin) return null;
+        return {
+            type: NEW_API_CANVAS_CONFIG,
+            version: 1,
+            baseUrl: baseUrl.origin,
+            apiKey,
+        };
+    } catch {
+        return null;
+    }
+}
