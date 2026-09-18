@@ -11,6 +11,7 @@ describe("parseNewApiCanvasConfig", () => {
                     version: 1,
                     baseUrl: "https://api.example.com/v1",
                     apiKey: "sk-image-key",
+                    channelName: "图图",
                 },
                 "https://api.example.com",
             ),
@@ -19,6 +20,7 @@ describe("parseNewApiCanvasConfig", () => {
             version: 1,
             baseUrl: "https://api.example.com",
             apiKey: "sk-image-key",
+            channelName: "图图",
         });
     });
 
@@ -30,6 +32,7 @@ describe("parseNewApiCanvasConfig", () => {
                     version: 1,
                     baseUrl: "https://attacker.example/v1",
                     apiKey: "sk-image-key",
+                    channelName: "图图",
                 },
                 "https://api.example.com",
             ),
@@ -44,6 +47,21 @@ describe("parseNewApiCanvasConfig", () => {
                     version: 1,
                     baseUrl: "https://api.example.com",
                     apiKey: "image-key",
+                    channelName: "图图",
+                },
+                "https://api.example.com",
+            ),
+        ).toBeNull();
+    });
+
+    test("rejects a message without the selected API key name", () => {
+        expect(
+            parseNewApiCanvasConfig(
+                {
+                    type: NEW_API_CANVAS_CONFIG,
+                    version: 1,
+                    baseUrl: "https://api.example.com",
+                    apiKey: "sk-image-key",
                 },
                 "https://api.example.com",
             ),

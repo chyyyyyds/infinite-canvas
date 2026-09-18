@@ -4,6 +4,7 @@ import { App } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { NEW_API_CANVAS_CONFIGURED, NEW_API_CANVAS_READY, parseNewApiCanvasConfig } from "@/lib/new-api-host";
+import { fetchChannelModels } from "@/services/api/image";
 import { useConfigStore } from "@/stores/use-config-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 
@@ -11,7 +12,9 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
     const handledConfigParams = useRef(false);
+    const managedChannelRequest = useRef(0);
     const importChannelCredentials = useConfigStore((state) => state.importChannelCredentials);
+    const updateChannelModels = useConfigStore((state) => state.updateChannelModels);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     usePromptSourceScheduler();
@@ -40,23 +43,33 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         if (window.parent === window) return;
 
         const parentOrigin = window.location.origin;
-        const handleMessage = (event: MessageEvent) => {
+        const handleMessage = async (event: MessageEvent) => {
             // 仅接受同源父窗口发送的配置，避免第三方页面注入或窃取 API Key。
             if (event.origin !== parentOrigin || event.source !== window.parent) return;
             const config = parseNewApiCanvasConfig(event.data, parentOrigin);
             if (!config) return;
 
-            const result = importChannelCredentials(config);
-            openConfigDialog(false, "channels");
-            window.parent.postMessage({ type: NEW_API_CANVAS_CONFIGURED, version: 1 }, parentOrigin);
-            if (result.status === "created") message.success(t("config.importedChannelCreated", { name: result.channelName }));
-            else if (result.status === "updated") message.success(t("config.importedChannelUpdated", { name: result.channelName }));
+            const requestId = ++managedChannelRequest.current;
+            const result = importChannelCredentials({ ...config, managedByHost: true });
+            const channel = useConfigStore.getState().config.channels.find((item) => item.id === result.channelId);
+            if (!channel) return;
+
+            try {
+                const models = await fetchChannelModels(channel);
+                if (requestId !== managedChannelRequest.current) return;
+                updateChannelModels(channel.id, models);
+                window.parent.postMessage({ type: NEW_API_CANVAS_CONFIGURED, version: 1 }, parentOrigin);
+                message.success(t("config.modelSelect.fetched", { count: models.length }));
+            } catch (error) {
+                if (requestId !== managedChannelRequest.current) return;
+                message.error(error instanceof Error ? error.message : t("config.modelSelect.fetchFailed"));
+            }
         };
 
         window.addEventListener("message", handleMessage);
         window.parent.postMessage({ type: NEW_API_CANVAS_READY, version: 1 }, parentOrigin);
         return () => window.removeEventListener("message", handleMessage);
-    }, [importChannelCredentials, message, openConfigDialog, t]);
+    }, [importChannelCredentials, message, t, updateChannelModels]);
 
     return <>{children}</>;
 }

@@ -7,15 +7,18 @@ export type NewApiCanvasConfig = {
     version: 1;
     baseUrl: string;
     apiKey: string;
+    channelName: string;
 };
 
 export function parseNewApiCanvasConfig(data: unknown, expectedOrigin: string): NewApiCanvasConfig | null {
     if (!data || typeof data !== "object") return null;
     const candidate = data as Record<string, unknown>;
-    if (candidate.type !== NEW_API_CANVAS_CONFIG || candidate.version !== 1 || typeof candidate.baseUrl !== "string" || typeof candidate.apiKey !== "string") return null;
+    if (candidate.type !== NEW_API_CANVAS_CONFIG || candidate.version !== 1 || typeof candidate.baseUrl !== "string" || typeof candidate.apiKey !== "string" || typeof candidate.channelName !== "string") return null;
 
     const apiKey = candidate.apiKey.trim();
+    const channelName = candidate.channelName.trim();
     if (!apiKey.startsWith("sk-") || apiKey.length <= 3) return null;
+    if (!channelName || channelName.length > 100) return null;
 
     try {
         const baseUrl = new URL(candidate.baseUrl.trim());
@@ -25,6 +28,7 @@ export function parseNewApiCanvasConfig(data: unknown, expectedOrigin: string): 
             version: 1,
             baseUrl: baseUrl.origin,
             apiKey,
+            channelName,
         };
     } catch {
         return null;
