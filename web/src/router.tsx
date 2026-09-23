@@ -12,24 +12,38 @@ import NotFound from "@/pages/not-found";
 import PromptsPage from "@/pages/prompts";
 import VideoPage from "@/pages/video";
 
-export const router = createBrowserRouter([
+const getBasename = () => {
+    const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+    if (base) return base;
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/canvas")) {
+        return "/canvas";
+    }
+    return undefined;
+};
+
+export const router = createBrowserRouter(
+    [
+        {
+            element: (
+                <UserLayout>
+                    <AnalyticsTracker />
+                    <Outlet />
+                </UserLayout>
+            ),
+            children: [
+                { path: "/", element: <HomePage /> },
+                { path: "/image", element: <ImagePage /> },
+                { path: "/video", element: <VideoPage /> },
+                { path: "/assets", element: <AssetsPage /> },
+                { path: "/prompts", element: <PromptsPage /> },
+                { path: "/canvas", element: <CanvasPage /> },
+                { path: "/canvas/:id", element: <CanvasProjectPage /> },
+                { path: "/config", element: <ConfigPage /> },
+            ],
+        },
+        { path: "*", element: <NotFound /> },
+    ],
     {
-        element: (
-            <UserLayout>
-                <AnalyticsTracker />
-                <Outlet />
-            </UserLayout>
-        ),
-        children: [
-            { path: "/", element: <HomePage /> },
-            { path: "/image", element: <ImagePage /> },
-            { path: "/video", element: <VideoPage /> },
-            { path: "/assets", element: <AssetsPage /> },
-            { path: "/prompts", element: <PromptsPage /> },
-            { path: "/canvas", element: <CanvasPage /> },
-            { path: "/canvas/:id", element: <CanvasProjectPage /> },
-            { path: "/config", element: <ConfigPage /> },
-        ],
+        basename: getBasename(),
     },
-    { path: "*", element: <NotFound /> },
-]);
+);

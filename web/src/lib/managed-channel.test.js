@@ -6,7 +6,7 @@ globalThis.localStorage = {
     removeItem: () => undefined,
 };
 
-const { defaultConfig, upsertChannelCredentials } = await import("../stores/use-config-store");
+const { defaultConfig, guessCapability, upsertChannelCredentials } = await import("../stores/use-config-store");
 
 describe("New API managed channel", () => {
     test("uses the selected API key name and locks the same-origin OpenAI channel", () => {
@@ -24,5 +24,9 @@ describe("New API managed channel", () => {
             apiFormat: "openai",
             managedByHost: true,
         });
+    });
+
+    test("recognizes Seedance models as video models", () => {
+        expect(guessCapability("seedance-2.0-fast-720p-c5")).toBe("video");
     });
 });

@@ -4,6 +4,8 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import { kokoVideoModelConfig, videoResolutionPixels } from "@/lib/video-model-config";
+import type { NewApiCanvasConfig } from "@/lib/new-api-host";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -91,26 +93,12 @@ export const defaultConfig: AiConfig = {
     baseUrl: OPENAI_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
-    channels: [
-        {
-            id: "default",
-            name: i18n.t("config.channels.defaultName"),
-            baseUrl: OPENAI_BASE_URL,
-            apiKey: "",
-            apiFormat: "openai",
-            models: [
-                { name: "gpt-image-2", capability: "image" },
-                { name: "grok-imagine-video", capability: "video" },
-                { name: "gpt-5.5", capability: "text" },
-                { name: "gpt-4o-mini-tts", capability: "audio" },
-            ],
-        },
-    ],
-    model: "default::gpt-image-2",
-    imageModel: "default::gpt-image-2",
-    videoModel: "default::grok-imagine-video",
-    textModel: "default::gpt-5.5",
-    audioModel: "default::gpt-4o-mini-tts",
+    channels: [],
+    model: "",
+    imageModel: "",
+    videoModel: "",
+    textModel: "",
+    audioModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
@@ -122,7 +110,7 @@ export const defaultConfig: AiConfig = {
     videoMode: "frames",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: [],
     quality: "auto",
     size: "1:1",
     background: "",
@@ -149,7 +137,7 @@ type ConfigStore = {
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     importChannelCredentials: (input: ChannelCredentialsInput) => ChannelCredentialsImportResult;
-    updateChannelModels: (channelId: string, models: string[]) => void;
+    updateChannelModels: (channelId: string, models: string[], defaults?: NewApiCanvasConfig) => void;
     setHistoryScope: (historyScope: string) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
@@ -158,7 +146,7 @@ type ConfigStore = {
     clearPromptContinue: () => void;
 };
 
-const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo"];
+const VIDEO_KEYWORDS = ["video", "seedance", "minimaxh3", "sora", "veo", "kling", "wan", "hailuo"];
 
 export function boolConfig(value: string, fallback: boolean) {
     return value ? value === "true" : fallback;
@@ -201,8 +189,9 @@ export function resolveModelForCapability(config: AiConfig, currentModel: string
 }
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
-    if (!capability) return config.models;
-    return config.channels.flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
+    const channels = modelSelectionChannels(config.channels);
+    if (!capability) return modelOptionsFromChannels(channels);
+    return channels.flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
 }
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */
@@ -237,7 +226,7 @@ export const useConfigStore = create<ConfigStore>()(
                 if (result.config !== currentConfig) set({ config: result.config });
                 return { status: result.status, channelName: result.channelName, channelId: result.channelId };
             },
-            updateChannelModels: (channelId, models) =>
+            updateChannelModels: (channelId, models, defaults) =>
                 set((state) => {
                     const channels = state.config.channels.map((channel) => {
                         if (channel.id !== channelId) return channel;
@@ -247,7 +236,23 @@ export const useConfigStore = create<ConfigStore>()(
                             models: normalizeChannelModels(models.map((name) => currentModels.get(name) || { name, capability: guessCapability(name) })),
                         };
                     });
-                    return { config: withModelChannels(state.config, channels) };
+                    const nextConfig = withModelChannels(state.config, channels);
+                    const targetChannel = channels.find((c) => c.id === channelId);
+                    const imageModels = targetChannel?.models.filter((m) => m.capability === "image" || !m.capability) || [];
+                    if (imageModels.length > 0) {
+                        nextConfig.imageModel = encodeChannelModel(channelId, imageModels[0].name);
+                    }
+                    const videoModels = targetChannel?.models.filter((m) => m.capability === "video") || [];
+                    const preferredVideoModel = videoModels.find((model) => model.name === defaults?.preferredModel) || videoModels[0];
+                    if (preferredVideoModel && defaults?.studio === "video") {
+                        nextConfig.videoModel = encodeChannelModel(channelId, preferredVideoModel.name);
+                        nextConfig.model = nextConfig.videoModel;
+                        const fixedConfig = kokoVideoModelConfig(preferredVideoModel.name);
+                        nextConfig.videoSeconds = fixedConfig ? String(fixedConfig.defaultDuration) : defaults.videoSeconds || nextConfig.videoSeconds;
+                        nextConfig.vquality = fixedConfig ? videoResolutionPixels(fixedConfig.resolution) : defaults.videoResolution || nextConfig.vquality;
+                        nextConfig.size = fixedConfig ? "16:9" : defaults.videoSize || nextConfig.size;
+                    }
+                    return { config: nextConfig };
                 }),
             setHistoryScope: (historyScope) => set({ historyScope }),
             updateWebdavConfig: (key, value) =>
@@ -271,6 +276,8 @@ export const useConfigStore = create<ConfigStore>()(
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
                 const config = { ...defaultConfig, ...persistedConfig };
                 if (!Array.isArray(persistedConfig.channels)) config.channels = [];
+                // 清洗 localStorage 历史残留的无 apiKey 的默认渠道
+                config.channels = config.channels.filter((c) => c.id !== "default" || Boolean(c.apiKey?.trim()));
                 const channels = normalizeChannels(config);
                 const models = modelOptionsFromChannels(channels);
                 return {
@@ -348,18 +355,22 @@ export function upsertChannelCredentials(config: AiConfig, input: ChannelCredent
     const apiKey = input.apiKey?.trim() || "";
     const channelName = input.channelName?.trim() || "";
     const managedByHost = Boolean(input.managedByHost);
-    const matchingIndex = config.channels.findIndex((channel) => normalizedBaseUrlKey(channel.baseUrl) === normalizedBaseUrlKey(baseUrl));
+
+    // 过滤掉所有未配置有效 apiKey 的默认渠道
+    const cleanChannels = config.channels.filter((channel) => channel.id !== "default" || Boolean(channel.apiKey?.trim()));
+
+    const matchingIndex = cleanChannels.findIndex((channel) => (managedByHost && channel.managedByHost) || normalizedBaseUrlKey(channel.baseUrl) === normalizedBaseUrlKey(baseUrl));
 
     if (matchingIndex >= 0) {
-        const existing = config.channels[matchingIndex];
+        const existing = cleanChannels[matchingIndex];
         const updated = {
             ...existing,
             name: channelName || existing.name,
             baseUrl,
-            ...(apiKey ? { apiKey } : {}),
+            apiKey: apiKey || existing.apiKey,
             ...(managedByHost ? { apiFormat: "openai" as const, managedByHost: true, models: [] } : {}),
         };
-        const channels = config.channels.map((channel, index) => (index === matchingIndex ? updated : channel));
+        const channels = cleanChannels.map((channel, index) => (index === matchingIndex ? updated : channel));
         return { status: "updated", channelName: updated.name, channelId: updated.id, config: withModelChannels(config, channels) };
     }
 
@@ -371,7 +382,7 @@ export function upsertChannelCredentials(config: AiConfig, input: ChannelCredent
         models: [],
         managedByHost,
     });
-    const channels = [...config.channels, channel];
+    const channels = managedByHost ? [channel, ...cleanChannels.filter((c) => !c.managedByHost)] : [...cleanChannels, channel];
     return { status: "created", channelName: channel.name, channelId: channel.id, config: withModelChannels(config, channels) };
 }
 
@@ -433,7 +444,13 @@ export function modelOptionLabel(config: AiConfig, value: string) {
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
-    return uniqueModelOptions(channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model.name))));
+    return uniqueModelOptions(modelSelectionChannels(channels).flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model.name))));
+}
+
+/** 嵌入 new-api 时只展示当前宿主管理渠道，避免混入浏览器里保存的其他渠道模型。 */
+function modelSelectionChannels(channels: ModelChannel[]) {
+    const managedChannel = channels.find((channel) => channel.managedByHost);
+    return managedChannel ? [managedChannel] : channels;
 }
 
 export function withModelChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
@@ -503,27 +520,15 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 
 function normalizeChannels(config: AiConfig) {
     const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
-    const channels = persistedChannels.map((channel, index) =>
+    const validChannels = persistedChannels.filter((channel) => channel.id !== "default" || Boolean(channel.apiKey?.trim()));
+    return validChannels.map((channel, index) =>
         createModelChannel({
             ...channel,
-            id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
-            name: channel.name || (index === 0 ? i18n.t("config.channels.defaultName") : i18n.t("config.channels.indexedName", { index: index + 1 })),
+            id: channel.id || `channel-${index + 1}`,
+            name: channel.name || i18n.t("config.channels.indexedName", { index: index + 1 }),
             models: normalizeChannelModels(channel.models),
         }),
     );
-    if (!channels.length) {
-        channels.push(
-            createModelChannel({
-                id: "default",
-                name: i18n.t("config.channels.defaultName"),
-                baseUrl: config.baseUrl || defaultConfig.baseUrl,
-                apiKey: config.apiKey || "",
-                apiFormat: config.apiFormat || defaultConfig.apiFormat,
-                models: normalizeChannelModels([config.model, config.imageModel, config.videoModel, config.textModel, config.audioModel].map(modelOptionName)),
-            }),
-        );
-    }
-    return channels;
 }
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {

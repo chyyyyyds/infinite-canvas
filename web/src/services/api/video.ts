@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
+import { kokoVideoModelConfig, normalizeKokoVideoDuration } from "@/lib/video-model-config";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -16,6 +17,26 @@ type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoRe
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
 type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: ReferenceAudio[] };
+type SeedanceVideoRequest = {
+    model: string;
+    prompt: string;
+    duration: number;
+    aspect_ratio: string;
+    image_url?: string;
+    extra_images?: string[];
+    extra_videos?: string[];
+    extra_audios?: string[];
+};
+type KokoVideoRequest = {
+    model: string;
+    prompt: string;
+    duration: number;
+    ratio: string;
+    resolution: "720p" | "2K";
+    mode: "text-to-video" | "reference" | "first-frame";
+    count: 1;
+    reference_images?: Array<{ url: string }>;
+};
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
@@ -70,12 +91,14 @@ function videoTaskFailed(message: string) {
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
-    const selectedModel = (config.model || config.videoModel).trim();
+    const selectedModel = (config.videoModel || config.model).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (requestConfig.apiFormat === "gemini") return createGeminiVideoTask(requestConfig, selectedModel, prompt, references, options);
+    if (isKokoVideoModel(selectedModel)) return createKokoVideoTask(requestConfig, selectedModel, prompt, references, options);
+    if (isSeedancePerTaskModel(selectedModel)) return createSeedanceVideoTask(requestConfig, selectedModel, prompt, references, options);
     return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
 }
 
@@ -144,6 +167,103 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
         }
     }
     throw new Error(apiText("noPlayableVideo"));
+}
+
+async function createSeedanceVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    try {
+        const body = buildSeedanceVideoRequest(config, model, prompt, references, options);
+        const created = unwrapVideoResponse(
+            (
+                await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, {
+                    headers: aiHeaders(config, "application/json"),
+                    signal: options?.signal,
+                })
+            ).data,
+        );
+        if (!created.id) throw new Error(apiText("noVideoTaskId"));
+        return { id: created.id, provider: "openai", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+    }
+}
+
+export function buildSeedanceVideoRequest(config: AiConfig, model: string, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): SeedanceVideoRequest {
+    const modelName = modelOptionName(model);
+    const videos = (options?.videos || []).map((item) => seedanceReferenceUrl(item.url));
+    const audios = (options?.audios || []).map((item) => seedanceReferenceUrl(item.url));
+    if (modelName.endsWith("-c5") && (videos.length > 0 || audios.length > 0)) {
+        throw new Error(apiText("seedanceModelMediaUnsupported"));
+    }
+    const images = references.map((item) => seedanceReferenceUrl(item.url, item.dataUrl));
+    if (images.length > 9) throw new Error(apiText("seedanceImageLimit"));
+
+    return {
+        model: modelName,
+        prompt,
+        duration: normalizeSeedanceDuration(modelName, config.videoSeconds),
+        aspect_ratio: videoAspectRatio(config.size),
+        ...(images[0] ? { image_url: images[0] } : {}),
+        ...(images.length > 1 ? { extra_images: images.slice(1) } : {}),
+        ...(videos.length > 0 ? { extra_videos: videos } : {}),
+        ...(audios.length > 0 ? { extra_audios: audios } : {}),
+    };
+}
+
+async function createKokoVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    try {
+        const body = buildKokoVideoRequest(config, model, prompt, references, options);
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        if (!created.id) throw new Error(apiText("noVideoTaskId"));
+        return { id: created.id, provider: "openai", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+    }
+}
+
+export function buildKokoVideoRequest(config: AiConfig, model: string, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): KokoVideoRequest {
+    const modelName = modelOptionName(model);
+    const fixedConfig = kokoVideoModelConfig(modelName);
+    if (!fixedConfig) throw new Error(apiText("videoModelRequired"));
+    if ((options?.videos || []).length > 0 || (options?.audios || []).length > 0) throw new Error(apiText("kokoMediaUnsupported"));
+    if (references.length > 9) throw new Error(apiText("seedanceImageLimit"));
+
+    const images = references.map((item) => ({ url: seedanceReferenceUrl(item.url, item.dataUrl) }));
+    const requestedRatio = videoAspectRatio(config.size);
+    const ratio = fixedConfig.ratios.includes(requestedRatio) ? requestedRatio : "16:9";
+    const mode = images.length > 0 ? (config.videoMode === "reference" ? "reference" : "first-frame") : "text-to-video";
+    return {
+        model: modelName,
+        prompt,
+        duration: Number(normalizeKokoVideoDuration(modelName, config.videoSeconds)),
+        ratio,
+        resolution: fixedConfig.resolution,
+        mode,
+        count: 1,
+        ...(images.length > 0 ? { reference_images: images } : {}),
+    };
+}
+
+function isKokoVideoModel(model: string) {
+    return Boolean(kokoVideoModelConfig(modelOptionName(model)));
+}
+
+function isSeedancePerTaskModel(model: string) {
+    return /^seedance-2\.(?:0|5)(?:-fast)?-(?:480|720)p-c(?:[1-9]|1[0-2])$/i.test(modelOptionName(model));
+}
+
+function normalizeSeedanceDuration(model: string, value: string) {
+    if (model.endsWith("-c5")) return 10;
+    const maxSeconds = model.endsWith("-c4") || model.endsWith("-c12") ? 30 : 15;
+    const requested = Math.min(maxSeconds, Math.max(4, Math.round(Number(value) || 4)));
+    if (model.endsWith("-c10")) return requested <= 12 ? 10 : 15;
+    if (model.endsWith("-c12") && [5, 10, 15].includes(requested)) return requested + 1;
+    return requested;
+}
+
+function seedanceReferenceUrl(...candidates: Array<string | undefined>) {
+    const url = candidates.find((candidate) => /^https:\/\//i.test(candidate || ""));
+    if (!url) throw new Error(apiText("seedanceReferenceHttpsRequired"));
+    return url;
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
@@ -220,16 +340,25 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
     if (videos[0]) instance.video = await fileToGeminiInline(videos[0]);
     if (audios[0]) instance.audio = await fileToGeminiInline(audios[0]);
     try {
-        const created = unwrapEnvelope((await axios.post<ApiEnvelope<GeminiVideoOperation>>(geminiVideoUrl(config, model, "predictLongRunning"), {
-            instances: [instance],
-            parameters: {
-                aspectRatio: videoAspectRatio(config.size),
-                durationSeconds: Number(normalizeVideoSeconds(config.videoSeconds)) || 8,
-                resolution: normalizeVideoResolution(config.vquality),
-                generateAudio: boolConfig(config.videoGenerateAudio, true),
-                addWatermark: boolConfig(config.videoWatermark, false),
-            },
-        }, { headers: geminiVideoHeaders(config), signal: options?.signal })).data, apiText("noVideoTask"));
+        const created = unwrapEnvelope(
+            (
+                await axios.post<ApiEnvelope<GeminiVideoOperation>>(
+                    geminiVideoUrl(config, model, "predictLongRunning"),
+                    {
+                        instances: [instance],
+                        parameters: {
+                            aspectRatio: videoAspectRatio(config.size),
+                            durationSeconds: Number(normalizeVideoSeconds(config.videoSeconds)) || 8,
+                            resolution: normalizeVideoResolution(config.vquality),
+                            generateAudio: boolConfig(config.videoGenerateAudio, true),
+                            addWatermark: boolConfig(config.videoWatermark, false),
+                        },
+                    },
+                    { headers: geminiVideoHeaders(config), signal: options?.signal },
+                )
+            ).data,
+            apiText("noVideoTask"),
+        );
         if (!created.name) throw new Error(apiText("noVideoTaskId"));
         return { id: created.name, provider: "gemini", model };
     } catch (error) {
@@ -363,17 +492,8 @@ function readApiErrorMessage(value: unknown): string {
     if (typeof value !== "object") return "";
     const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown };
     // error may be a string or an object containing a message.
-    const errorMsg =
-        typeof payload.error === "string"
-            ? payload.error
-            : (payload.error as { message?: unknown })?.message;
-    return (
-        readApiErrorMessage(payload.msg) ||
-        readApiErrorMessage(payload.message) ||
-        readApiErrorMessage(errorMsg) ||
-        readApiErrorMessage(payload.detail) ||
-        ""
-    );
+    const errorMsg = typeof payload.error === "string" ? payload.error : (payload.error as { message?: unknown })?.message;
+    return readApiErrorMessage(payload.msg) || readApiErrorMessage(payload.message) || readApiErrorMessage(errorMsg) || readApiErrorMessage(payload.detail) || "";
 }
 
 function readAxiosError(error: unknown, fallback: string) {

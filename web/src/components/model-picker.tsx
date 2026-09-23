@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Cpu } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -21,8 +21,12 @@ type ModelPickerProps = {
 export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder, onMissingConfig }: ModelPickerProps) {
     const { t } = useTranslation();
     const pickerId = useId();
+    const portalContainerRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
-    const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
+    const options = useMemo(
+        () => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))),
+        [capability, config, value],
+    );
     const current = value || "";
     const pickerPlaceholder = placeholder || t("settingsPanels.model.select");
 
@@ -35,53 +39,56 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     }, [pickerId]);
 
     return (
-        <Select
-            open={open}
-            value={current}
-            onOpenChange={(nextOpen) => {
-                if (nextOpen && !options.length && config.channelMode === "local") onMissingConfig?.();
-                if (nextOpen) window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId }));
-                setOpen(nextOpen);
-            }}
-            onValueChange={onChange}
-        >
-            <SelectTrigger
-                className={cn(
-                    "canvas-composer-model-picker h-8 w-fit max-w-full gap-2 rounded-full border border-input bg-transparent px-3 text-sm font-normal shadow-sm transition-colors",
-                    fullWidth ? "w-full min-w-0 justify-start" : "min-w-[9rem] justify-start",
-                    "data-[state=open]:border-ring data-[state=open]:ring-2 data-[state=open]:ring-ring/20",
-                    className,
-                )}
-                onMouseDown={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
-                title={current ? modelOptionLabel(config, current) : pickerPlaceholder}
+        <div ref={portalContainerRef} className={fullWidth ? "min-w-0 w-full" : "inline-flex min-w-0 max-w-full"}>
+            <Select
+                open={open}
+                value={current}
+                onOpenChange={(nextOpen) => {
+                    if (nextOpen && !options.length && config.channelMode === "local") onMissingConfig?.();
+                    if (nextOpen) window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId }));
+                    setOpen(nextOpen);
+                }}
+                onValueChange={onChange}
             >
-                <ModelIcon model={current} />
-                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current) : pickerPlaceholder}</span>
-            </SelectTrigger>
-            <SelectContent
-                data-canvas-no-zoom
-                className="z-[1200] w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
-                position="popper"
-                align="start"
-                side="bottom"
-                sideOffset={6}
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-            >
-                {options.length ? (
-                    options.map((model) => (
-                        <SelectItem key={model} value={model} textValue={modelOptionLabel(config, model)}>
-                            <ModelLabel config={config} model={model} />
+                <SelectTrigger
+                    className={cn(
+                        "canvas-composer-model-picker h-8 w-fit max-w-full gap-2 rounded-full border border-input bg-transparent px-3 text-sm font-normal shadow-sm transition-colors",
+                        fullWidth ? "w-full min-w-0 justify-start" : "min-w-[9rem] justify-start",
+                        "data-[state=open]:border-ring data-[state=open]:ring-2 data-[state=open]:ring-ring/20",
+                        className,
+                    )}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    title={current ? modelOptionLabel(config, current) : pickerPlaceholder}
+                >
+                    <ModelIcon model={current} />
+                    <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current) : pickerPlaceholder}</span>
+                </SelectTrigger>
+                <SelectContent
+                    portalContainer={portalContainerRef.current}
+                    data-canvas-no-zoom
+                    className="z-[1200] w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
+                    position="popper"
+                    align="start"
+                    side="bottom"
+                    sideOffset={6}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                >
+                    {options.length ? (
+                        options.map((model) => (
+                            <SelectItem key={model} value={model} textValue={modelOptionLabel(config, model)}>
+                                <ModelLabel config={config} model={model} />
+                            </SelectItem>
+                        ))
+                    ) : (
+                        <SelectItem value="__empty__" disabled>
+                            {emptyModelLabel(config, capability)}
                         </SelectItem>
-                    ))
-                ) : (
-                    <SelectItem value="__empty__" disabled>
-                        {emptyModelLabel(config, capability)}
-                    </SelectItem>
-                )}
-            </SelectContent>
-        </Select>
+                    )}
+                </SelectContent>
+            </Select>
+        </div>
     );
 }
 

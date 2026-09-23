@@ -88,4 +88,31 @@ describe("parseNewApiCanvasConfig", () => {
             ),
         ).toBeNull();
     });
+
+    test("accepts validated video studio defaults", () => {
+        expect(
+            parseNewApiCanvasConfig(
+                {
+                    type: NEW_API_CANVAS_CONFIG,
+                    version: 1,
+                    baseUrl: "https://api.example.com",
+                    apiKey: "sk-video-key",
+                    channelName: "seedance视频生成",
+                    historyScope: "user-42",
+                    studio: "video",
+                    preferredModel: "seedance-2.0-fast-720p-c5",
+                    videoSeconds: "10",
+                    videoResolution: "720",
+                    videoSize: "1280x720",
+                },
+                "https://api.example.com",
+            ),
+        ).toMatchObject({
+            studio: "video",
+            preferredModel: "seedance-2.0-fast-720p-c5",
+            videoSeconds: "10",
+            videoResolution: "720",
+            videoSize: "1280x720",
+        });
+    });
 });

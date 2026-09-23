@@ -6,7 +6,8 @@ import i18n from "@/i18n";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
-import { type AiConfig } from "@/stores/use-config-store";
+import { kokoVideoModelConfig, videoResolutionPixels } from "@/lib/video-model-config";
+import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
     { value: "480", label: "480p" },
@@ -19,7 +20,12 @@ const videoModeOptions = [
 ];
 
 export const videoResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
-export const videoSizeOptions = videoRatioOptions.map((item) => ({ value: item.value, get label() { return item.value === "auto" ? i18n.t("settingsPanels.common.auto") : item.value; } }));
+export const videoSizeOptions = videoRatioOptions.map((item) => ({
+    value: item.value,
+    get label() {
+        return item.value === "auto" ? i18n.t("settingsPanels.common.auto") : item.value;
+    },
+}));
 export const videoSecondsRange = { min: VIDEO_SECONDS_MIN, max: VIDEO_SECONDS_MAX };
 
 type VideoSettingsPanelProps = {
@@ -32,10 +38,15 @@ type VideoSettingsPanelProps = {
 
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
+    const modelName = modelOptionName(config.videoModel || config.model);
+    const fixedConfig = kokoVideoModelConfig(modelName);
     const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
     const videoMode = normalizeVideoModeValue(config.videoMode);
-    const resolution = parseVideoResolution(config.vquality);
+    const legacyResolution = seedanceModelResolution(config.videoModel || config.model);
+    const fixedResolution = fixedConfig?.resolution || (legacyResolution ? `${legacyResolution}p` : "");
+    const resolution = fixedConfig ? videoResolutionPixels(fixedConfig.resolution) : legacyResolution || parseVideoResolution(config.vquality);
     const selectedRatio = inferVideoRatio(config.size || "auto");
+    const ratioOptions = fixedConfig ? videoRatioOptions.filter((item) => fixedConfig.ratios.includes(item.value)) : videoRatioOptions;
     const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
     const applySize = (nextResolution: string, ratio: string) => {
         onConfigChange("vquality", nextResolution);
@@ -51,25 +62,35 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {resolutionOptions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => selectResolution(item.value)}>
-                                {item.label}
+                    {fixedResolution ? (
+                        <div className="grid grid-cols-1">
+                            <OptionPill selected disabled theme={theme} onClick={() => undefined}>
+                                {fixedResolution}
                             </OptionPill>
-                        ))}
-                        <ResolutionInput value={resolution} theme={theme} onChange={selectResolution} />
-                    </div>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {resolutionOptions.map((item) => (
+                                <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => selectResolution(item.value)}>
+                                    {item.label}
+                                </OptionPill>
+                            ))}
+                            <ResolutionInput value={resolution} theme={theme} onChange={selectResolution} />
+                        </div>
+                    )}
                 </SettingGroup>
-                <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("width", value, dimensions, onConfigChange)} />
-                        <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("height", value, dimensions, onConfigChange)} />
-                    </div>
-                </SettingGroup>
-                <SettingGroup title={t("settingsPanels.video.ratio")} color={theme.node.muted}>
+                {!fixedConfig ? (
+                    <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
+                        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                            <DimensionInput prefix="W" value={dimensions.width} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("width", value, dimensions, onConfigChange)} />
+                            <span className="text-lg opacity-45">↔</span>
+                            <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("height", value, dimensions, onConfigChange)} />
+                        </div>
+                    </SettingGroup>
+                ) : null}
+                <SettingGroup title={fixedConfig ? t("settingsPanels.video.size") : t("settingsPanels.video.ratio")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {videoRatioOptions.map((item) => (
+                        {ratioOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -85,17 +106,36 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </div>
                 </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.seconds")} color={theme.node.muted}>
-                    <div className="flex items-center gap-3" onMouseDown={(event) => event.stopPropagation()}>
-                        <Slider className="min-w-0 flex-1" min={VIDEO_SECONDS_MIN} max={VIDEO_SECONDS_MAX} step={1} value={seconds} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
-                        <SecondsInput value={seconds} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
-                        <span className="shrink-0 text-sm" style={{ color: theme.node.muted }}>s</span>
-                    </div>
+                    {fixedConfig && fixedConfig.durations.length <= 4 ? (
+                        <div className="grid grid-cols-2 gap-2.5">
+                            {fixedConfig.durations.map((duration) => (
+                                <OptionPill key={duration} selected={seconds === duration} theme={theme} onClick={() => onConfigChange("videoSeconds", String(duration))}>
+                                    {duration}s
+                                </OptionPill>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-3" onMouseDown={(event) => event.stopPropagation()}>
+                            <Slider
+                                className="min-w-0 flex-1"
+                                min={fixedConfig?.durations[0] || VIDEO_SECONDS_MIN}
+                                max={fixedConfig?.durations[fixedConfig.durations.length - 1] || VIDEO_SECONDS_MAX}
+                                step={1}
+                                value={seconds}
+                                onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))}
+                            />
+                            <SecondsInput value={seconds} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
+                            <span className="shrink-0 text-sm" style={{ color: theme.node.muted }}>
+                                s
+                            </span>
+                        </div>
+                    )}
                 </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-2.5">
                         {videoModeOptions.map((item) => (
                             <OptionPill key={item.value} selected={videoMode === item.value} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>
-                                {t(`settingsPanels.video.modes.${item.labelKey}`)}
+                                {t(`settingsPanels.video.modes.${fixedConfig && item.value === "frames" ? "firstFrame" : item.labelKey}`)}
                             </OptionPill>
                         ))}
                     </div>
@@ -138,6 +178,11 @@ export function normalizeVideoResolutionValue(value: string) {
     return parseVideoResolution(value);
 }
 
+export function seedanceModelResolution(value: string) {
+    const match = modelOptionName(value).match(/-(480|720|1080)p-/i);
+    return match?.[1] || "";
+}
+
 function updateDimension(key: "width" | "height", value: number | null, dimensions: { width: number; height: number }, onConfigChange: VideoSettingsPanelProps["onConfigChange"]) {
     const next = Math.max(1, Math.floor(value || dimensions[key] || 720));
     onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
@@ -145,7 +190,14 @@ function updateDimension(key: "width" | "height", value: number | null, dimensio
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
-        <button type="button" disabled={disabled} className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
+        <button
+            type="button"
+            disabled={disabled}
+            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35"
+            style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={onClick}
+        >
             {children}
         </button>
     );
@@ -165,7 +217,14 @@ function SettingGroup({ title, color, children }: { title: string; color: string
 function ResolutionInput({ value, theme, onChange }: { value: string; theme: CanvasTheme; onChange: (value: string) => void }) {
     return (
         <label className="flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
-            <input type="number" min={1} className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
+            <input
+                type="number"
+                min={1}
+                className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                onMouseDown={(event) => event.stopPropagation()}
+            />
             <span className="grid w-7 place-items-center pr-1" style={{ color: theme.node.muted }}>
                 p
             </span>
@@ -205,7 +264,15 @@ function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: 
             <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
                 {prefix}
             </span>
-            <input type="number" min={1} disabled={disabled} className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || null)} onMouseDown={(event) => event.stopPropagation()} />
+            <input
+                type="number"
+                min={1}
+                disabled={disabled}
+                className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={value || ""}
+                onChange={(event) => onChange(Number(event.target.value) || null)}
+                onMouseDown={(event) => event.stopPropagation()}
+            />
         </label>
     );
 }

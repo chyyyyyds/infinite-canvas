@@ -11,7 +11,8 @@ import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoModeLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { clampVideoSeconds } from "@/lib/media-size";
+import { clampVideoSeconds, inferVideoRatio } from "@/lib/media-size";
+import { kokoVideoModelConfig, videoResolutionPixels } from "@/lib/video-model-config";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { generationLogStorageKey, isGenerationLogStorageKeyForScope } from "@/lib/generation-log-storage";
 import { deleteStoredMedia, resolveMediaUrl } from "@/services/file-storage";
@@ -19,7 +20,7 @@ import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUr
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
@@ -568,10 +569,25 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
 
     return (
         <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
+            <div className="col-span-2 block min-w-0 sm:col-span-1">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
-            </label>
+                <ModelPicker
+                    config={config}
+                    value={model}
+                    onChange={(value) => {
+                        updateConfig("videoModel", value);
+                        const fixedConfig = kokoVideoModelConfig(modelOptionName(value));
+                        if (!fixedConfig) return;
+                        updateConfig("videoSeconds", String(fixedConfig.defaultDuration));
+                        updateConfig("vquality", videoResolutionPixels(fixedConfig.resolution));
+                        const currentRatio = inferVideoRatio(config.size || "16:9");
+                        updateConfig("size", fixedConfig.ratios.includes(currentRatio) ? currentRatio : "16:9");
+                    }}
+                    capability="video"
+                    fullWidth
+                    onMissingConfig={() => openConfigDialog(false)}
+                />
+            </div>
             <div className="col-span-2">
                 <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
             </div>

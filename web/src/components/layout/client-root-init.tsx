@@ -59,7 +59,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             try {
                 const models = await fetchChannelModels(channel);
                 if (requestId !== managedChannelRequest.current) return;
-                updateChannelModels(channel.id, models);
+                updateChannelModels(channel.id, models, config);
                 window.parent.postMessage({ type: NEW_API_CANVAS_CONFIGURED, version: 1 }, parentOrigin);
                 message.success(t("config.modelSelect.fetched", { count: models.length }));
             } catch (error) {
